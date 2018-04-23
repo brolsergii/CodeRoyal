@@ -97,14 +97,14 @@ class Player
     public static Dictionary<Owner, List<Unit>> units = new Dictionary<Owner, List<Unit>>();
 
     public const int optimalKnigntBarracks = 1;
-    public const int optimalGiantBarracks = 1;
+    public const int optimalGiantBarracks = 0;
     public const int optimalTowers = 4;
-    public const int optimalTowerHP = 200;
-    public const int optimalMines = 2;
-    public const int optimalMinesSize = 1;
+    public const int optimalTowerHP = 400;
+    public const int optimalMines = 1;
+    public const int optimalMinesSize = 2;
 
     public const int optimalKnights = 8;
-    public const int optimalGiants = 1;
+    public const int optimalGiants = 0;
     #endregion
 
     static double Distance(int x1, int y1, int x2, int y2) => Math.Sqrt(Math.Pow(x1 - x2, 2) + Math.Pow(y1 - y2, 2));
@@ -139,7 +139,7 @@ class Player
             if (numberOfMyMines < optimalMines || totalMineProduction < optimalMines * optimalMinesSize)
             {
                 if ((buildings[Queen.TouchId].StructureType == StructureType.None || buildings[Queen.TouchId].StructureType == StructureType.Mine) &&
-                    buildings[Queen.TouchId].Ignore1 > buildings[Queen.TouchId].Param1 /* can extract */)
+                    buildings[Queen.TouchId].Ignore2 > buildings[Queen.TouchId].Param1 /* can extract */)
                 {
                     Deb($"Build a mine {numberOfMyMines}");
                     return $"BUILD {Queen.TouchId} MINE";
@@ -174,26 +174,25 @@ class Player
         }
         if (buildingDone) // Save from the enemy
         {
-            Deb($"Try to save");
-            #region oldBuildCode
             /*
-            int towerId = -1;
-            double distance = double.MaxValue;
-            foreach (var tower in buildings.Values.Where(x=>x.Owner == Owner.Me))
+            Deb($"Try to save");
+            */
+            var towers = buildings.Values.Where(x => x.Owner == Owner.Me && x.StructureType == StructureType.Tower)
+                                         .OrderBy(x => Distance(sites[x.SiteId].X, sites[x.SiteId].Y, Queen.X, Queen.Y));
+            var towerToPower = towers.Where(x => (int)x.Param2 < optimalTowerHP).FirstOrDefault();
+            if (towerToPower != null)
             {
-                var tmpDistance = Distance(sites[tower.SiteId].X, sites[tower.SiteId].Y, Queen.X, Queen.Y);
-                if (tmpDistance < distance)
+                if (Queen.TouchId == towerToPower.SiteId)
                 {
-                    distance = tmpDistance;
-                    towerId = tower.SiteId;
+                    Deb($"Power tower {towerToPower.SiteId}");
+                    return $"BUILD {Queen.TouchId} TOWER";
+                }
+                else
+                {
+                    Deb($"Save to {towerToPower.SiteId}");
+                    return $"MOVE {sites[towerToPower.SiteId].X} {sites[towerToPower.SiteId].Y}";
                 }
             }
-            if (towerId != -1)
-            {
-                Deb($"Save to {towerId}");
-                return $"MOVE {sites[towerId].X} {sites[towerId].Y}";
-            }*/
-            #endregion
             return $"MOVE {saveX} {saveY}";
         }
         else // Go to closest empty site to build
@@ -281,7 +280,7 @@ class Player
             #region Init turn state
             inputs = Console.ReadLine().Split(' ');
             Gold = int.Parse(inputs[0]);
-            Deb($"Gold:{Gold}");
+            Deb($"Gold: {Gold}");
             Queen.TouchId = int.Parse(inputs[1]);
             for (int i = 0; i < numSites; i++)
             {
