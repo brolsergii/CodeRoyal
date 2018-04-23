@@ -13,6 +13,8 @@ enum Owner
 enum StructureType
 {
     None = -1,
+    Mine = 0,
+    Tower = 1,
     Caserne = 2
 }
 
@@ -20,7 +22,8 @@ enum UnitType
 {
     Queen = -1,
     Knight = 0,
-    Archer = 1
+    Archer = 1,
+    Giant = 2
 }
 
 class Site
@@ -35,11 +38,13 @@ class Site
 class Building
 {
     public int SiteId;
+    public int Ignore1;
+    public int Ignore2;
     public StructureType StructureType;
     public Owner Owner;
-    public int CoolDown;
-    public UnitType UnitType;
-    public override string ToString() => $" ({SiteId}) [{StructureType},{Owner},{CoolDown},{UnitType}]";
+    public int Param1;
+    public UnitType Param2;
+    public override string ToString() => $" ({SiteId}) [{StructureType},{Owner},{Ignore1},{Ignore2},{Param1},{Param2}]";
 }
 
 class Unit
@@ -77,63 +82,180 @@ class Player
     #region Global game state
     public const int knightsCost = 80;
     public const int archersCost = 100;
+    public const int giantCost = 140;
+
+    public static List<string> BuildHistory = new List<string>();
 
     public static Dictionary<int, Site> sites = new Dictionary<int, Site>();
+    public static int saveX = -1;
+    public static int saveY = -1;
 
     public static int Gold = 0;
     public static Queen Queen = new Queen();
     public static Queen EnemyQueen = new Queen();
     public static Dictionary<int, Building> buildings = new Dictionary<int, Building>();
-    public static List<Unit> units = new List<Unit>();
+    public static Dictionary<Owner, List<Unit>> units = new Dictionary<Owner, List<Unit>>();
+
+    public const int optimalKnigntBarracks = 1;
+    public const int optimalGiantBarracks = 1;
+    public const int optimalTowers = 4;
+    public const int optimalTowerHP = 200;
+    public const int optimalMines = 2;
+    public const int optimalMinesSize = 1;
+
+    public const int optimalKnights = 8;
+    public const int optimalGiants = 1;
     #endregion
 
     static double Distance(int x1, int y1, int x2, int y2) => Math.Sqrt(Math.Pow(x1 - x2, 2) + Math.Pow(y1 - y2, 2));
 
     static String GetQueenAction()
     {
+        bool buildingDone = false;
         // Build if close to empty spot
-        if (Queen.TouchId != -1)
+        int numberOfMyKnightBarracks = buildings.Where(x => x.Value.Owner == Owner.Me &&
+                                              x.Value.StructureType == StructureType.Caserne &&
+                                              x.Value.Param2 == UnitType.Knight).Count();
+        int numberOfMyGiantBarracks = buildings.Where(x => x.Value.Owner == Owner.Me &&
+                                              x.Value.StructureType == StructureType.Caserne &&
+                                              x.Value.Param2 == UnitType.Giant).Count();
+        int numberOfMyTowers = buildings.Where(x => x.Value.Owner == Owner.Me &&
+                                               x.Value.StructureType == StructureType.Tower).Count();
+        int numberOfMyMines = buildings.Where(x => x.Value.Owner == Owner.Me &&
+                                              x.Value.StructureType == StructureType.Mine).Count();
+        int totalMineProduction = buildings.Where(x => x.Value.Owner == Owner.Me &&
+                                                  x.Value.StructureType == StructureType.Mine).Select(x => x.Value.Param1).Sum();
+        if (numberOfMyMines >= optimalMines &&
+            numberOfMyKnightBarracks >= optimalKnigntBarracks &&
+            numberOfMyGiantBarracks >= optimalGiantBarracks &&
+            numberOfMyTowers >= optimalTowers)
         {
-            if (buildings[Queen.TouchId].StructureType == StructureType.None)
-            {
-                return $"BUILD {Queen.TouchId} BARRACKS-KNIGHT";
-            }
+            buildingDone = true;
         }
+        if (!buildingDone && Queen.TouchId != -1)
+        {
+            bool doubleAction = BuildHistory.Take(1) == BuildHistory.Skip(1).Take(1);
 
-        // Go to closest empty site if not
-        int siteId = -1;
-        double distance = double.MaxValue;
-        foreach (var emptySite in buildings.Where(x => x.Value.StructureType == StructureType.None))
-        {
-            double tmpDistance = Distance(sites[emptySite.Key].X, sites[emptySite.Key].Y, Queen.X, Queen.Y);
-            if (distance > tmpDistance)
+            if (numberOfMyMines < optimalMines || totalMineProduction < optimalMines * optimalMinesSize)
             {
-                distance = tmpDistance;
-                siteId = emptySite.Key;
+                if ((buildings[Queen.TouchId].StructureType == StructureType.None || buildings[Queen.TouchId].StructureType == StructureType.Mine) &&
+                    buildings[Queen.TouchId].Ignore1 > buildings[Queen.TouchId].Param1 /* can extract */)
+                {
+                    Deb($"Build a mine {numberOfMyMines}");
+                    return $"BUILD {Queen.TouchId} MINE";
+                }
+            }
+            if (numberOfMyKnightBarracks < optimalKnigntBarracks)
+            {
+                if (buildings[Queen.TouchId].StructureType == StructureType.None)
+                {
+                    Deb($"Build a knight barrack {numberOfMyKnightBarracks}");
+                    return $"BUILD {Queen.TouchId} BARRACKS-KNIGHT";
+                }
+            }
+            if (numberOfMyTowers < optimalTowers)
+            {
+                if (!doubleAction &&
+                    (buildings[Queen.TouchId].StructureType == StructureType.None || buildings[Queen.TouchId].StructureType == StructureType.Tower) &&
+                    (int)buildings[Queen.TouchId].Param2 < optimalTowerHP)
+                {
+                    Deb($"Build a tower {numberOfMyTowers}");
+                    return $"BUILD {Queen.TouchId} TOWER";
+                }
+            }
+            if (numberOfMyGiantBarracks < optimalGiantBarracks)
+            {
+                if (buildings[Queen.TouchId].StructureType == StructureType.None)
+                {
+                    Deb($"Build a giant barrack {numberOfMyGiantBarracks}");
+                    return $"BUILD {Queen.TouchId} BARRACKS-GIANT";
+                }
             }
         }
-        if (siteId != -1)
+        if (buildingDone) // Save from the enemy
         {
-            return $"MOVE {sites[siteId].X} {sites[siteId].Y}";
+            Deb($"Try to save");
+            #region oldBuildCode
+            /*
+            int towerId = -1;
+            double distance = double.MaxValue;
+            foreach (var tower in buildings.Values.Where(x=>x.Owner == Owner.Me))
+            {
+                var tmpDistance = Distance(sites[tower.SiteId].X, sites[tower.SiteId].Y, Queen.X, Queen.Y);
+                if (tmpDistance < distance)
+                {
+                    distance = tmpDistance;
+                    towerId = tower.SiteId;
+                }
+            }
+            if (towerId != -1)
+            {
+                Deb($"Save to {towerId}");
+                return $"MOVE {sites[towerId].X} {sites[towerId].Y}";
+            }*/
+            #endregion
+            return $"MOVE {saveX} {saveY}";
+        }
+        else // Go to closest empty site to build
+        {
+            Deb($"Try to go to the closest buildable spot");
+            int siteId = -1;
+            double distance = double.MaxValue;
+            foreach (var emptySite in buildings.Where(x => x.Value.StructureType == StructureType.None))
+            {
+                double tmpDistance = Distance(sites[emptySite.Key].X, sites[emptySite.Key].Y, Queen.X, Queen.Y);
+                if (distance > tmpDistance)
+                {
+                    distance = tmpDistance;
+                    siteId = emptySite.Key;
+                }
+            }
+            if (siteId != -1)
+            {
+                return $"MOVE {sites[siteId].X} {sites[siteId].Y}";
+            }
         }
         return "WAIT"; // default action
     }
 
     static String GetTrainingAction()
     {
-        var knightsList = new HashSet<int>();
-        foreach (var knightsBarrak in buildings.Where(x => x.Value.Owner == Owner.Me &&
-                                                      x.Value.StructureType == StructureType.Caserne &&
-                                                      x.Value.CoolDown == 0 &&
-                                                      x.Value.UnitType == UnitType.Knight))
+        int numberOfMyKnights = units[Owner.Me].Where(x => x.UnitType == UnitType.Knight).Count();
+        int numberOfMyGiants = units[Owner.Me].Where(x => x.UnitType == UnitType.Giant).Count();
+        if (numberOfMyKnights < optimalKnights)
         {
-            if (Gold > knightsCost)
+            Deb("Try build knights");
+            var knightsList = new HashSet<int>();
+            foreach (var knightsBarrack in buildings.Where(x => x.Value.Owner == Owner.Me &&
+                                                           x.Value.StructureType == StructureType.Caserne &&
+                                                           x.Value.Param1 == 0 &&
+                                                           x.Value.Param2 == UnitType.Knight))
             {
-                Gold -= knightsCost;
-                knightsList.Add(knightsBarrak.Key);
+                if (Gold > knightsCost)
+                {
+                    Gold -= knightsCost;
+                    knightsList.Add(knightsBarrack.Key);
+                }
+            }
+            return $"TRAIN" + (knightsList.Any() ? " " + string.Join(" ", knightsList) : "");
+        }
+        else if (numberOfMyGiants < optimalGiants)
+        {
+            Deb("Try build a giant");
+
+            if (Gold > giantCost)
+            {
+                var giantBarrack = buildings.Where(x => x.Value.Owner == Owner.Me &&
+                                                   x.Value.StructureType == StructureType.Caserne &&
+                                                   x.Value.Param1 == 0 &&
+                                                   x.Value.Param2 == UnitType.Giant)?.FirstOrDefault();
+                if (giantBarrack != null)
+                {
+                    return $"TRAIN {giantBarrack.Value.Key}";
+                }
             }
         }
-        return $"TRAIN" + (knightsList.Any() ? " " + string.Join(" ", knightsList) : "");
+        return "TRAIN";
     }
 
     static void Main(string[] args)
@@ -174,16 +296,20 @@ class Player
                 buildings[siteId] = new Building()
                 {
                     SiteId = siteId,
+                    Ignore1 = ignore1,
+                    Ignore2 = ignore2,
                     StructureType = (StructureType)structureType,
                     Owner = (Owner)owner,
-                    CoolDown = param1,
-                    UnitType = (UnitType)param2
+                    Param1 = param1,
+                    Param2 = (UnitType)param2
                 };
             }
             Deb("Buildings:");
             DebList(buildings.Values.ToList());
 
             units.Clear();
+            units[Owner.Me] = new List<Unit>();
+            units[Owner.Enemy] = new List<Unit>();
             int numUnits = int.Parse(Console.ReadLine());
             for (int i = 0; i < numUnits; i++)
             {
@@ -197,6 +323,19 @@ class Player
                 {
                     if (owner == (int)Owner.Me)
                     {
+                        if (saveX == -1)
+                        {
+                            if (x < 500)
+                            {
+                                saveX = 0;
+                                saveY = 0;
+                            }
+                            else
+                            {
+                                saveX = 1920;
+                                saveY = 1000;
+                            }
+                        }
                         Queen.X = x;
                         Queen.Y = y;
                         Queen.HP = health;
@@ -209,7 +348,7 @@ class Player
                     }
                 }
                 else
-                    units.Add(new Unit()
+                    units[(Owner)owner].Add(new Unit()
                     {
                         X = x,
                         Y = y,
@@ -218,18 +357,25 @@ class Player
                         HP = health
                     });
             }
-            if (units.Any())
+            if (units[Owner.Me].Any())
             {
-                Deb("Units:");
-                DebList(units);
+                Deb("My units:");
+                DebList(units[Owner.Me]);
+            }
+            if (units[Owner.Enemy].Any())
+            {
+                Deb("Enemy units:");
+                DebList(units[Owner.Enemy]);
             }
 
             Deb($"My: {Queen}");
             Deb($"Enemy: {EnemyQueen}");
-            #endregion
+            #endregion  
 
             // First line: A valid queen action
-            Console.WriteLine(GetQueenAction());
+            var buildAction = GetQueenAction();
+            BuildHistory.Insert(0, buildAction);
+            Console.WriteLine(buildAction);
             // Second line: A set of training instructions
             Console.WriteLine(GetTrainingAction());
         }
