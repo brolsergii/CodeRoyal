@@ -100,8 +100,8 @@ class Player
     public const int optimalGiantBarracks = 0;
     public const int optimalTowers = 4;
     public const int optimalTowerHP = 400;
-    public const int optimalMines = 1;
-    public const int optimalMinesSize = 2;
+    public static int optimalMines = 1;
+    public static int optimalMinesSize = 2;
 
     public const int optimalKnights = 8;
     public const int optimalGiants = 0;
@@ -111,8 +111,14 @@ class Player
 
     static String GetQueenAction()
     {
+        // IDEA: lowerOptimal tower number to 3
+        // IDEA: Run from eneme knights as top1 priority
+        // IDEA: Avoid enemy towers as top1 priority when moving
+        // IDEA: When constructing mine upgrade to max level if possible
+
         bool buildingDone = false;
-        // Build if close to empty spot
+        bool needToBuildMine = false;
+        
         int numberOfMyKnightBarracks = buildings.Where(x => x.Value.Owner == Owner.Me &&
                                               x.Value.StructureType == StructureType.Caserne &&
                                               x.Value.Param2 == UnitType.Knight).Count();
@@ -132,11 +138,14 @@ class Player
         {
             buildingDone = true;
         }
+
+        needToBuildMine = numberOfMyMines < optimalMines || totalMineProduction < optimalMines * optimalMinesSize;
+        // Build if close to empty spot
         if (!buildingDone && Queen.TouchId != -1)
         {
             bool doubleAction = BuildHistory.Take(1) == BuildHistory.Skip(1).Take(1);
-
-            if (numberOfMyMines < optimalMines || totalMineProduction < optimalMines * optimalMinesSize)
+       
+            if (needToBuildMine)
             {
                 if ((buildings[Queen.TouchId].StructureType == StructureType.None || buildings[Queen.TouchId].StructureType == StructureType.Mine) &&
                     buildings[Queen.TouchId].Ignore2 > buildings[Queen.TouchId].Param1 /* can extract */)
@@ -198,20 +207,20 @@ class Player
         else // Go to closest empty site to build
         {
             Deb($"Try to go to the closest buildable spot");
-            int siteId = -1;
-            double distance = double.MaxValue;
-            foreach (var emptySite in buildings.Where(x => x.Value.StructureType == StructureType.None))
+            var emptySites = buildings.Where(x => x.Value.StructureType == StructureType.None &&
+                                                  (!needToBuildMine || x.Value.Ignore1 > 0))
+                                      .OrderBy(x => Distance(sites[x.Key].X, sites[x.Key].Y, Queen.X, Queen.Y));
+            if (emptySites.Any())
             {
-                double tmpDistance = Distance(sites[emptySite.Key].X, sites[emptySite.Key].Y, Queen.X, Queen.Y);
-                if (distance > tmpDistance)
-                {
-                    distance = tmpDistance;
-                    siteId = emptySite.Key;
-                }
-            }
-            if (siteId != -1)
-            {
+                int siteId = emptySites.FirstOrDefault().Key;
                 return $"MOVE {sites[siteId].X} {sites[siteId].Y}";
+            }
+            else
+            {
+                Deb($"No more empty mines");
+                optimalMines = 0;
+                optimalMinesSize = 0;
+                return $"MOVE {saveX} {saveY}";
             }
         }
         return "WAIT"; // default action
